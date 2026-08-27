@@ -51,13 +51,13 @@
   });
 })();
 </script>
-<header><h1 id="page-title">药物+NCT试验预测评估报告</h1><p>新版 Codex 评估结果 · 逐终点复核 · 三个独立评估轴 · 原始证据透传</p><nav class="platform-nav" aria-label="平台导航"><a href="evaluation_dashboard.html">评估首页</a><a href="evaluation_dashboard.html?panel=prospective">前瞻性总览看板</a><a href="evaluation_dashboard.html?panel=dataset">数据集详情</a><a href="evaluation_dashboard.html?panel=workflow">标准化工作流</a><a href="evaluation_dashboard.html?panel=versions">版本迭代管理</a></nav></header>
+<header><h1 id="page-title">药物+NCT试验预测评估报告</h1><p>新版 Codex 评估结果 · 逐终点复核 · 三个独立评估轴 · 原始证据透传</p><nav class="platform-nav" aria-label="平台导航"><a href=".">评估首页</a><a href="?view=version-compare">运行版本对比</a><a href="?panel=prospective">前瞻性总览看板</a><a href="?panel=dataset">数据集详情</a><a href="?panel=workflow">标准化工作流</a><a href="?panel=versions">版本迭代管理</a></nav></header>
 <main class="wrap">
-<div class="bar"><label for="api">评估接口</label><input id="api" value="http://127.0.0.1:8103"><span class="meta">只读冻结评估接口 · 控制页面接口：8092</span><button id="refresh">刷新</button><button id="compare" disabled>对比选中样本</button><span id="message" class="meta"></span></div>
+<div class="bar"><label for="api">评估接口</label><input id="api" value="http://127.0.0.1:8103"><span class="meta">只读冻结评估接口 · 控制页面接口：8092</span><button id="refresh">刷新</button><button id="compare" disabled>对比选中样本</button><button id="version-compare-btn" class="light">运行版本维度对比</button><span id="message" class="meta"></span></div>
 <section class="filters card"><div><label>NCT ID 搜索</label><input id="q" placeholder="例如 NCT01368588"></div><div><label>模型标识（可多选）</label><select id="models" multiple></select></div><div><label>预测框架（可多选）</label><select id="frameworks" multiple></select></div><div><label>运行版本（可多选）</label><select id="versions" multiple></select></div><label class="check"><input id="only-ne" type="checkbox">含不可评估</label><label class="check"><input id="only-abstained" type="checkbox">含弃答</label><button id="apply" class="light">筛选</button></section>
 <div class="toolbar-note"><span id="count">尚未加载</span><span>新版页面不兼容旧版评估字段；前端不计算任何分数。</span></div>
 <section id="list" class="card table-wrap"><div class="empty">正在读取新版评估样本……</div></section>
-<section id="detail" hidden></section><section id="compare-view" hidden></section>
+<section id="detail" hidden></section><section id="compare-view" hidden></section><section id="version-compare-view" hidden></section>
 <section id="control-panel" class="control-panel"><div id="control-content"></div></section>
 </main>
 <script>
@@ -170,6 +170,66 @@ function metricEnhanced(parent,dim,m){let v=m?.value??m?.score??'not_evaluable',
  function backendReasonSections(raw){let text=String(raw??'').trim();if(!text)return[];let names=['证据','优点与不足','评分档位依据'],hits=[];for(let name of names){let at=text.indexOf(name);if(at>=0)hits.push({name,at})}hits.sort((a,b)=>a.at-b.at);if(!hits.length)return[{name:'评审原文',text:text}];let out=[];for(let i=0;i<hits.length;i++){let start=hits[i].at+hits[i].name.length;let end=i+1<hits.length?hits[i+1].at:text.length;let value=text.slice(start,end).replace(/^\s*[：:]\s*/,'').trim();if(value)out.push({name:hits[i].name,text:value})}return out}
  function metricEnhancedReadable(parent,dim,m){let v=m?.value??m?.score??'not_evaluable',d=node('div',undefined,'metric'),head=node('div',undefined,'metric-head');head.append(node('span',label(dim)));head.append(node('b',typeof v==='number'?String(v):val(v),valueClass(v)));d.append(head);if(typeof v==='number'){let bar=node('div',undefined,`score-bar ${v===0?'score-zero':''}`),i=document.createElement('i');i.style.width=`${Math.max(0,Math.min(100,v))}%`;bar.append(i)}let details=node('details');details.open=true;details.append(node('summary','评分依据（后端原文分段）'));let explicit=[['证据',m?.evidence],['优点与不足',m?.strengths??m?.limitations],['评分档位依据',m?.score_band_reason??m?.scoring_basis]].filter(([,x])=>String(x??'').trim());let sections=explicit.length?explicit.map(([name,text])=>({name,text:String(text)})):backendReasonSections(m?.reason??'');for(let part of sections){let block=node('div',undefined,'reason');block.append(node('strong',part.name+'：'));renderValue(block,part.text);details.append(block)}let refs=node('div');refs.append(node('strong','引用来源'));for(let ref of (m?.evidence_refs||m?.evidence||[]))refs.append(node('div',String(ref),'quote'));details.append(refs);d.append(details);parent.append(d)}
  metricEnhanced=metricEnhancedReadable;
+ // ===== 运行版本维度对比（静态部署扩展；仅在静态副本计算，主平台页面不做聚合）=====
+ // 聚合口径（与后端 model_agg_metrics 相同）：每个维度取全部样本中数值型得分的算术平均，
+ // not_evaluable 样本排除在分子与分母之外；n=0 的维度显示"—"且不参与综合分。
+ // 综合总分 = 16 个维度各自均值再取算术平均（仅对 n>0 的维度），不引入任何权重。
+ const VC_AXES={prediction_accuracy:['endpoint_field_completeness','value_accuracy','direction_consistency','group_timepoint_match','hallucination_endpoint','overconfidence_post_cutoff'],analysis_quality:['reasoning_trace_completeness','claim_consistency','uncertainty_appropriateness','causal_plausibility','hallucination_analysis'],search_quality:['evidence_relevance','claim_evidence_alignment','evidence_sufficiency','citation_correctness','unused_or_misapplied_evidence']};
+ function vcDimStats(trials){let out={};for(let axis of Object.keys(VC_AXES)){for(let dim of VC_AXES[axis]){let vals=[];for(let t of trials){let v=(((t.axis_summary||{})[axis]||{}).dimensions||{})[dim]?.value;if(typeof v==='number')vals.push(v)}out[axis+'|'+dim]={mean:vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null,n:vals.length}}}return out}
+ function vcFmt(x){return x==null?'—':(Math.round(x*10)/10).toFixed(1)}
+ async function loadVersionCompare(){
+  let view=$('version-compare-view');view.hidden=false;$('list').hidden=true;$('detail').hidden=true;$('compare-view').hidden=true;document.querySelector('.filters').style.display='none';document.querySelector('.toolbar-note').style.display='none';$('control-panel').classList.remove('active');
+  view.replaceChildren(node('div','正在读取各运行版本评估样本……','empty'));msg('读取版本对比……');
+  try{
+   let versions=await fetch(liveApiBase()+'/api/evaluation/versions').then(r=>{if(!r.ok)throw Error('接口错误 '+r.status);return r.json()});
+   let usable=versions.filter(x=>x.artifact_status==='valid');
+   let perVersion=[];
+   for(let v of usable){
+    let summary=await fetch(liveApiBase()+'/api/evaluation/version/'+encodeURIComponent(v.version_id)+'/summary').then(r=>r.json());
+    let models=Object.keys(summary.models||{});
+    let trials=[];
+    for(let model of models){
+     let doc=await fetch(liveApiBase()+'/api/evaluation/version/'+encodeURIComponent(v.version_id)+'/models/'+encodeURIComponent(model)+'/trials?limit=100').then(r=>{if(!r.ok)throw Error('接口错误 '+r.status);return r.json()});
+     trials=trials.concat((doc.trials||[]).map(x=>normalizeTrialSummary(x,v.version_id)));
+    }
+    perVersion.push({version_id:v.version_id,models,trials,stats:vcDimStats(trials)});
+   }
+   renderVersionCompare(view,perVersion);msg('版本对比已加载');
+  }catch(e){view.replaceChildren(node('div',e instanceof Error?e.message:'版本对比加载失败','control-error'))}
+ }
+ function renderVersionCompare(root,perVersion){
+  root.replaceChildren();
+  let hero=node('section',undefined,'control-hero');
+  hero.append(node('h2','运行版本维度对比'),
+   node('p','口径：每个维度 = 该版本全部样本中数值型得分的算术平均（not_evaluable 排除于分子与分母，n=0 显示"—"）；综合总分 = 16 个维度均值再取算术平均（仅对 n>0 维度，不加权）。此对比仅在静态部署页计算，用于人工浏览，不回写任何评估工件。','control-muted'));
+  let back=node('button','返回评估列表','light');back.onclick=()=>{root.hidden=true;$('list').hidden=false;$('detail').hidden=true;document.querySelector('.filters').style.display='';document.querySelector('.toolbar-note').style.display='';loadSamples()};hero.append(back);root.append(hero);
+  // composite table
+  let comp=node('section',undefined,'control-section');comp.append(node('h3','综合总分对比（各维度均值再平均）'));
+  let ct=document.createElement('table');ct.className='control-table';let ch=ct.insertRow();['运行版本','模型','样本数','综合总分（16维均值再平均）','参与维度数'].forEach(x=>ch.append(node('th',x)));
+  for(let pv of perVersion){
+   let means=Object.values(pv.stats).filter(s=>s.mean!=null);
+   let composite=means.length?means.reduce((a,b)=>a+b.mean,0)/means.length:null;
+   let row=ct.insertRow();[pv.version_id,pv.models.join('、'),String(pv.trials.length),vcFmt(composite),String(means.length)+'/16'].forEach(x=>row.append(node('td',x)));
+  }
+  comp.append(ct);root.append(comp);
+  // per-dimension table grouped by axis
+  for(let axis of Object.keys(VC_AXES)){
+   let sec=node('section',undefined,'control-section');sec.append(node('h3',AX[axis]+'（逐维度均值）'));
+   let t=document.createElement('table');t.className='control-table';let hrow=t.insertRow();['维度',...perVersion.map(p=>p.version_id)].forEach(x=>hrow.append(node('th',x)));
+   for(let dim of VC_AXES[axis]){
+    let row=t.insertRow();row.append(node('td',DIM[dim]||dim));
+    for(let pv of perVersion){let st=pv.stats[axis+'|'+dim];row.append(node('td',st.mean==null?'—':vcFmt(st.mean)+'（n='+st.n+'）'))}
+   }
+   sec.append(t);root.append(sec);
+  }
+  // per-trial dimension count note
+  let note=node('section',undefined,'control-section');note.append(node('h3','覆盖度说明'));let nt=document.createElement('table');nt.className='control-table';let nh=nt.insertRow();['运行版本','数值型维度-样本计数总数','not_evaluable 计数（各维度 n 差额）'].forEach(x=>nh.append(node('th',x)));
+  for(let pv of perVersion){let total=pv.trials.length*16;let numeric=Object.values(pv.stats).reduce((a,s)=>a+s.n,0);let row=nt.insertRow();[pv.version_id,String(numeric)+' / '+total,String(total-numeric)].forEach(x=>row.append(node('td',x)))}
+  note.append(nt);root.append(note);
+ }
+ let vcBtn=$('version-compare-btn');if(vcBtn)vcBtn.onclick=()=>loadVersionCompare();
  let initialPanel=new URLSearchParams(location.search).get('panel');
-if(initialPanel==='dataset'||initialPanel==='workflow'||initialPanel==='versions'||initialPanel==='prospective')openControlPanel(initialPanel);else{loadFilters().then(loadSamples).catch(e=>msg(e.message));setInterval(pollEvaluationVersions,30000)}
+ let initialView=new URLSearchParams(location.search).get('view');
+ if(initialView==='version-compare'){loadFilters().then(()=>loadVersionCompare()).catch(e=>msg(e.message));setInterval(pollEvaluationVersions,30000)}
+ else if(initialPanel==='dataset'||initialPanel==='workflow'||initialPanel==='versions'||initialPanel==='prospective')openControlPanel(initialPanel);else{loadFilters().then(loadSamples).catch(e=>msg(e.message));setInterval(pollEvaluationVersions,30000)}
 </script></body></html>
