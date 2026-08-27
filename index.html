@@ -18,7 +18,7 @@
   const REAL=window.fetch;
   const API_PREFIXES=['http://127.0.0.1:8103','https://unifanfei.github.io'];
   function mapToStatic(url){
-    let u=String(url);
+    let u=String(url).split('?')[0];
     // normalize: strip any api base
     let m=u.match(/\/api\/evaluation\/versions$/);
     if(m) return 'eval_api/versions.json';
@@ -28,13 +28,20 @@
     if(m) return 'eval_api/'+m[1]+'/models_'+m[2]+'_trials.json';
     m=u.match(/\/api\/evaluation\/version\/([^/]+)\/trials\/([^/?]+)/);
     if(m) return 'eval_api/'+m[1]+'/trial_'+m[2]+'.json';
+    // control-plane (8092) static snapshots
+    m=u.match(/\/api\/control\/prospective\/trials\/([^/?]+)/);
+    if(m) return 'control/prospective_trial.json';
+    if(u.endsWith('/api/control/prospective/dashboard')) return 'control/prospective.json';
+    if(u.endsWith('/api/control/datasets/prediction_ready_13912/trials')) return 'control/dataset_trials.json';
+    if(u.endsWith('/api/control/datasets/prediction_ready_13912')) return 'control/datasets_prediction_ready_13912.json';
+    if(u.endsWith('/api/control/workflow')) return 'control/workflow.json';
+    if(u.endsWith('/api/control/versions')) return 'control/versions.json';
+    if(u.endsWith('/api/control/retrospectives')) return 'control/retrospectives.json';
     return null;
   }
   window.fetch=function(url,opts){
     let mapped=mapToStatic(url);
     if(mapped!==null){return REAL(new URL(mapped,location.href).toString(),opts)}
-    // control-plane (8092) endpoints: not deployed statically; return graceful 503-shape
-    if(String(url).includes(':8092')){return Promise.resolve(new Response(JSON.stringify({detail:'静态部署未包含控制平面接口'}),{status:503,headers:{'Content-Type':'application/json'}}))}
     return REAL(url,opts);
   };
   // relative base so the same HTML works on Pages and locally
