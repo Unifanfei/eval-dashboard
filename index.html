@@ -201,33 +201,66 @@ function metricEnhanced(parent,dim,m){let v=m?.value??m?.score??'not_evaluable',
   root.replaceChildren();
   let hero=node('section',undefined,'control-hero');
   hero.append(node('h2','运行版本维度对比'),
-   node('p','口径：每个维度 = 该版本全部样本中数值型得分的算术平均（not_evaluable 排除于分子与分母，n=0 显示"—"）；综合总分 = 16 个维度均值再取算术平均（仅对 n>0 维度，不加权）。此对比仅在静态部署页计算，用于人工浏览，不回写任何评估工件。','control-muted'));
+   node('p','口径：每个维度 = 该版本全部样本中数值型得分的算术平均（not_evaluable 排除于分子与分母，n=0 显示「—」）；轴小计 = 该轴各维度均值再平均；综合总分 = 16 个维度均值再取算术平均（仅对 n>0 维度，不加权）。Δ 列 = 首列版本减去末列版本，正数表示首列更高。此对比仅在静态部署页计算，用于人工浏览，不回写任何评估工件。','control-muted'));
   let back=node('button','返回评估列表','light');back.onclick=()=>{root.hidden=true;$('list').hidden=false;$('detail').hidden=true;document.querySelector('.filters').style.display='';document.querySelector('.toolbar-note').style.display='';loadSamples()};hero.append(back);root.append(hero);
-  // composite table
-  let comp=node('section',undefined,'control-section');comp.append(node('h3','综合总分对比（各维度均值再平均）'));
-  let ct=document.createElement('table');ct.className='control-table';let ch=ct.insertRow();['运行版本','模型','样本数','综合总分（16维均值再平均）','参与维度数'].forEach(x=>ch.append(node('th',x)));
+  // axis-subtotal summary table (the "which version wins where" view)
+  let summ=node('section',undefined,'control-section');summ.append(node('h3','轴小计对比（先看这张：总分接近但各轴互有胜负）'));
+  let st=document.createElement('table');st.className='control-table';let sh=st.insertRow();
+  ['评估轴',...perVersion.map(p=>p.version_id),'Δ（首列−末列）'].forEach(x=>sh.append(node('th',x)));
+  for(let axis of Object.keys(VC_AXES)){
+   let row=st.insertRow();row.append(node('td',AX[axis]));
+   let first=null,last=null;
+   for(let pv of perVersion){
+    let dims=VC_AXES[axis].map(d=>pv.stats[axis+'|'+d]).filter(s=>s.mean!=null);
+    let m=dims.length?dims.reduce((a,b)=>a+b.mean,0)/dims.length:null;
+    if(first==null)first=m;last=m;
+    row.append(node('td',m==null?'—':vcFmt(m)));
+   }
+   let delta=(first!=null&&last!=null)?first-last:null;
+   let dCell=node('td',delta==null?'—':(delta>0?'+':'')+vcFmt(delta));
+   if(delta!=null){dCell.style.color=delta>0?'var(--green)':delta<0?'var(--red)':'var(--muted)';dCell.style.fontWeight='700'}
+   row.append(dCell);
+  }
+  // composite row
+  let crow=st.insertRow();crow.append(node('td','综合总分（16维均值再平均）'));
+  let firstC=null,lastC=null;
   for(let pv of perVersion){
    let means=Object.values(pv.stats).filter(s=>s.mean!=null);
-   let composite=means.length?means.reduce((a,b)=>a+b.mean,0)/means.length:null;
-   let row=ct.insertRow();[pv.version_id,pv.models.join('、'),String(pv.trials.length),vcFmt(composite),String(means.length)+'/16'].forEach(x=>row.append(node('td',x)));
+   let c=means.length?means.reduce((a,b)=>a+b.mean,0)/means.length:null;
+   if(firstC==null)firstC=c;lastC=c;
+   crow.append(node('td',c==null?'—':vcFmt(c)));
   }
-  comp.append(ct);root.append(comp);
-  // per-dimension table grouped by axis
+  let cd=(firstC!=null&&lastC!=null)?firstC-lastC:null;
+  let cdCell=node('td',cd==null?'—':(cd>0?'+':'')+vcFmt(cd));
+  if(cd!=null){cdCell.style.color=cd>0?'var(--green)':cd<0?'var(--red)':'var(--muted)';cdCell.style.fontWeight='700'}
+  crow.append(cdCell);
+  summ.append(st);
+  summ.append(node('p','读法：综合总分接近不代表两个版本实力相当——正负 Δ 在轴之间方向相反时会互相抵消。请结合下方逐维度表定位各自的优势轴与短板轴。','control-muted'));
+  root.append(summ);
+  // per-dimension tables grouped by axis, with delta column vs last version
   for(let axis of Object.keys(VC_AXES)){
-   let sec=node('section',undefined,'control-section');sec.append(node('h3',AX[axis]+'（逐维度均值）'));
-   let t=document.createElement('table');t.className='control-table';let hrow=t.insertRow();['维度',...perVersion.map(p=>p.version_id)].forEach(x=>hrow.append(node('th',x)));
+   let sec=node('section',undefined,'control-section');sec.append(node('h3',AX[axis]+'（逐维度均值 + Δ）'));
+   let t=document.createElement('table');t.className='control-table';let hrow=t.insertRow();
+   ['维度',...perVersion.map(p=>p.version_id),'Δ（首列−末列）'].forEach(x=>hrow.append(node('th',x)));
    for(let dim of VC_AXES[axis]){
     let row=t.insertRow();row.append(node('td',DIM[dim]||dim));
-    for(let pv of perVersion){let st=pv.stats[axis+'|'+dim];row.append(node('td',st.mean==null?'—':vcFmt(st.mean)+'（n='+st.n+'）'))}
+    let first=null,last=null;
+    for(let pv of perVersion){let stt=pv.stats[axis+'|'+dim];if(first==null)first=stt.mean;last=stt.mean;row.append(node('td',stt.mean==null?'—':vcFmt(stt.mean)+'（n='+stt.n+'）'))}
+    let d=(first!=null&&last!=null)?first-last:null;
+    let cell=node('td',d==null?'—':(d>0?'+':'')+vcFmt(d));
+    if(d!=null){cell.style.color=Math.abs(d)>=5?(d>0?'var(--green)':'var(--red)'):'var(--muted)';if(Math.abs(d)>=5)cell.style.fontWeight='700'}
+    row.append(cell);
    }
    sec.append(t);root.append(sec);
   }
-  // per-trial dimension count note
-  let note=node('section',undefined,'control-section');note.append(node('h3','覆盖度说明'));let nt=document.createElement('table');nt.className='control-table';let nh=nt.insertRow();['运行版本','数值型维度-样本计数总数','not_evaluable 计数（各维度 n 差额）'].forEach(x=>nh.append(node('th',x)));
+  // coverage note
+  let note=node('section',undefined,'control-section');note.append(node('h3','覆盖度说明'));
+  let nt=document.createElement('table');nt.className='control-table';let nh=nt.insertRow();
+  ['运行版本','数值型维度-样本计数总数','not_evaluable 计数（各维度 n 差额）'].forEach(x=>nh.append(node('th',x)));
   for(let pv of perVersion){let total=pv.trials.length*16;let numeric=Object.values(pv.stats).reduce((a,s)=>a+s.n,0);let row=nt.insertRow();[pv.version_id,String(numeric)+' / '+total,String(total-numeric)].forEach(x=>row.append(node('td',x)))}
   note.append(nt);root.append(note);
  }
- let vcBtn=$('version-compare-btn');if(vcBtn)vcBtn.onclick=()=>loadVersionCompare();
+let vcBtn=$('version-compare-btn');if(vcBtn)vcBtn.onclick=()=>loadVersionCompare();
  let initialPanel=new URLSearchParams(location.search).get('panel');
  let initialView=new URLSearchParams(location.search).get('view');
  if(initialView==='version-compare'){loadFilters().then(()=>loadVersionCompare()).catch(e=>msg(e.message));setInterval(pollEvaluationVersions,30000)}
