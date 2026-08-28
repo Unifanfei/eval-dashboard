@@ -31,6 +31,7 @@
     // control-plane (8092) static snapshots
     m=u.match(/\/api\/control\/prospective\/trials\/([^/?]+)/);
     if(m) return 'control/prospective_trials/'+m[1]+'.json';
+    if(u.endsWith('/api/control/f1')) return 'control/f1.json';
     if(u.endsWith('/api/control/prospective/dashboard')) return 'control/prospective.json';
     if(u.endsWith('/api/control/datasets/prediction_ready_13912/trials')) return 'control/dataset_trials.json';
     if(u.endsWith('/api/control/datasets/prediction_ready_13912')) return 'control/datasets_prediction_ready_13912.json';
@@ -51,7 +52,7 @@
   });
 })();
 </script>
-<header><h1 id="page-title">药物+NCT试验预测评估报告</h1><p>新版 Codex 评估结果 · 逐终点复核 · 三个独立评估轴 · 原始证据透传</p><nav class="platform-nav" aria-label="平台导航"><a href=".">评估首页</a><a href="?view=version-compare">运行版本对比</a><a href="?panel=prospective">前瞻性总览看板</a><a href="?panel=dataset">数据集详情</a><a href="?panel=workflow">标准化工作流</a><a href="?panel=versions">版本迭代管理</a></nav></header>
+<header><h1 id="page-title">药物+NCT试验预测评估报告</h1><p>新版 Codex 评估结果 · 逐终点复核 · 三个独立评估轴 · 原始证据透传</p><nav class="platform-nav" aria-label="平台导航"><a href=".">评估首页</a><a href="?view=version-compare">运行版本对比</a><a href="?panel=f1">成败判定 F1</a><a href="?panel=prospective">前瞻性总览看板</a><a href="?panel=dataset">数据集详情</a><a href="?panel=workflow">标准化工作流</a><a href="?panel=versions">版本迭代管理</a></nav></header>
 <main class="wrap">
 <div class="bar"><label for="api">评估接口</label><input id="api" value="http://127.0.0.1:8103"><span class="meta">只读冻结评估接口 · 控制页面接口：8092</span><button id="refresh">刷新</button><button id="compare" disabled>对比选中样本</button><button id="version-compare-btn" class="light">运行版本维度对比</button><span id="message" class="meta"></span></div>
 <section class="filters card"><div><label>NCT ID 搜索</label><input id="q" placeholder="例如 NCT01368588"></div><div><label>模型标识（可多选）</label><select id="models" multiple></select></div><div><label>预测框架（可多选）</label><select id="frameworks" multiple></select></div><div><label>运行版本（可多选）</label><select id="versions" multiple></select></div><label class="check"><input id="only-ne" type="checkbox">含不可评估</label><label class="check"><input id="only-abstained" type="checkbox">含弃答</label><button id="apply" class="light">筛选</button></section>
@@ -166,7 +167,55 @@ for(let s of item.analysis_trace)tr.append(node('div',String(s),'quote'));
 d.append(tr)}
 box.append(d)}
 root.append(box)}catch(error){msg(error.message)}}
-async function openControlPanel(panel){document.querySelector('.filters').style.display='none';document.querySelector('.toolbar-note').style.display='none';$('list').hidden=true;$('detail').hidden=true;$('compare-view').hidden=true;$('control-panel').classList.add('active');let content=$('control-content');content.append(node('div','正在读取控制平面…','empty'));try{if(panel==='dataset'){let data=await controlApi('/api/control/datasets/prediction_ready_13912');let trials=await controlApi('/api/control/datasets/prediction_ready_13912/trials?limit=50');renderDatasetControl(data,trials)}else if(panel==='workflow'){let data=await controlApi('/api/control/workflow');renderWorkflowControl(data);renderDetailedReplicationGuide($('control-content'),data);renderReplicationChecklist($('control-content'))}else if(panel==='prospective'){renderProspectiveControl(await controlApi('/api/control/prospective/dashboard'))}else{let records=await controlApi('/api/control/versions');let retrospectives=await controlApi('/api/control/retrospectives');renderVersionsControl(records,retrospectives);renderVersionSnapshots(records)}}catch(error){content.replaceChildren(node('div',error instanceof Error?error.message:'控制平面读取失败','control-error'))}}
+function renderF1Control(data){let root=$('control-content');root.replaceChildren();
+root.append(controlHeader('成败判定 F1（主要终点统一标准）','按 docs/prospective_success_criteria_v1.md 统一口径：试验成功 = 全部 co-primary 主要终点在预设检验下达标；预测侧 P1 二值化（uncertain 且 P≥0.5 记达标）；Gold NULL 不进分母。'));
+if(!data.available){let miss=node('section',undefined,'control-section');miss.append(node('h3','报告尚未生成'));miss.append(node('p',String(data.detail||'未找到 F1 报告工件。'),'control-muted'));root.append(miss);return}
+let goldSec=node('section',undefined,'control-section');goldSec.append(node('h3','Gold 实际结局（两层派生）'));
+let gt=document.createElement('table');gt.className='control-table';let gh=gt.insertRow();
+['Gold 层','success','fail','NULL','口径说明'].forEach(x=>gh.append(node('th',x)));
+for(let [title,key,note] of [
+ ['第一层 · 显著性（严格）','tier1_significance','CT.gov 结果统计：p≤0.05 或 CI 排除无效值，co-primary 全达标才 success；任一未达标即 fail。'],
+ ['第二层 · 方向恢复（扩展）','tier2_direction_recovered','对第一层 NULL 且实验组/对照组均值可配对的终点：按极性判点估计方向。是方向口径，不等价于统计学显著。'],
+ ['合并口径（主表用）','merged','第一层 + 第二层；仍未派生的为 NULL，不进分母。']]){
+ let row=gt.insertRow();let d=(data.gold||{})[key]||{};
+ row.append(node('td',title));
+ ['success','fail','NULL'].forEach(k=>row.append(node('td',controlText(d[k]!=null?d[k]:(d['NULL2']!=null&&k==='NULL'?d['NULL2']:undefined)))));
+ row.append(node('td',note,'control-muted'))}
+goldSec.append(gt);goldSec.append(node('p',`队列：${controlText(data.cohort)}；判定标准版本：${controlText(data.criteria_version)}；GT 覆盖 54/75（72%），NULL=结果统计不可派生（缺配对组数据），不硬造 Gold。`,'control-muted'));root.append(goldSec);
+let mSec=node('section',undefined,'control-section');mSec.append(node('h3','模型 F1 对照（预测 P1 二值化 × Gold）'));
+let mt=document.createElement('table');mt.className='control-table';let mh=mt.insertRow();
+['模型','口径','N','TP','FP','FN','TN','Accuracy','Precision','Recall','Specificity','F1(success)'].forEach(x=>mh.append(node('th',x)));
+function fmt(x){return typeof x==='number'?(Math.round(x*1000)/10).toFixed(1)+'%':'—'}
+for(let [model,md] of Object.entries(data.models||{})){
+ for(let [title,key] of [['严格 Gold（第一层）','strict_significance_gold'],['扩展 Gold（合并口径）','extended_with_direction_gold']]){
+  let m=(md||{})[key]||{};let row=mt.insertRow();
+  if(key==='strict_significance_gold'){let c=node('td',model);c.rowSpan=2;row.append(c)}
+  row.append(node('td',title));
+  [m.n,m.tp,m.fp,m.fn,m.tn].forEach(x=>row.append(node('td',controlText(x))));
+  [m.accuracy,m.precision,m.recall,m.specificity,m.f1].forEach(x=>row.append(node('td',fmt(x))));
+ }}
+mSec.append(mt);
+mSec.append(node('p','读法：Kimi 高召回低特异（倾向预测 success）；DeepSeek 两类均衡，合并口径下各项指标同时上升。两口径数字不同源于 Gold 覆盖不同（严格 38-39 条 vs 扩展 48-51 条），不是模型变化。','control-muted'));root.append(mSec);
+let dSec=node('section',undefined,'control-section');dSec.append(node('h3','逐试验判定（'+'75'+' 条）'));
+let dt=document.createElement('table');dt.className='control-table';let dh=dt.insertRow();
+['NCT ID','Kimi 预测(P1)','Kimi 严格判定','Kimi 扩展判定','DeepSeek 预测(P1)','DeepSeek 严格判定','DeepSeek 扩展判定','Gold(严格)','Gold(合并)'].forEach(x=>dh.append(node('th',x)));
+let kimi=(data.models||{}).Kimi||{},ds=(data.models||{}).DeepSeek||{};
+let km={};for(let r of kimi.per_trial||[])km[r.nct_id]=r;
+let dm={};for(let r of ds.per_trial||[])dm[r.nct_id]=r;
+function mark(v){if(v===true)return '✓ 对';if(v===false)return '✗ 错';return '—'}
+for(let nct of Object.keys(km)){
+ let a=km[nct]||{},b=dm[nct]||{};let row=dt.insertRow();
+ row.append(node('td',nct,'nct'));
+ row.append(node('td',controlText(a.prediction_P1)));
+ row.append(node('td',mark(a.correct_strict)));
+ row.append(node('td',mark(a.correct_merged)));
+ row.append(node('td',controlText(b.prediction_P1)));
+ row.append(node('td',mark(b.correct_strict)));
+ row.append(node('td',mark(b.correct_merged)));
+ row.append(node('td',controlText(a.gold_tier1)));
+ row.append(node('td',controlText(a.gold_merged)))}
+dSec.append(dt);root.append(dSec)}
+async function openControlPanel(panel){document.querySelector('.filters').style.display='none';document.querySelector('.toolbar-note').style.display='none';$('list').hidden=true;$('detail').hidden=true;$('compare-view').hidden=true;$('control-panel').classList.add('active');let content=$('control-content');content.append(node('div','正在读取控制平面…','empty'));try{if(panel==='dataset'){let data=await controlApi('/api/control/datasets/prediction_ready_13912');let trials=await controlApi('/api/control/datasets/prediction_ready_13912/trials?limit=50');renderDatasetControl(data,trials)}else if(panel==='workflow'){let data=await controlApi('/api/control/workflow');renderWorkflowControl(data);renderDetailedReplicationGuide($('control-content'),data);renderReplicationChecklist($('control-content'))}else if(panel==='prospective'){renderProspectiveControl(await controlApi('/api/control/prospective/dashboard'))}else if(panel==='f1'){renderF1Control(await controlApi('/api/control/f1'))}else{let records=await controlApi('/api/control/versions');let retrospectives=await controlApi('/api/control/retrospectives');renderVersionsControl(records,retrospectives);renderVersionSnapshots(records)}}catch(error){content.replaceChildren(node('div',error instanceof Error?error.message:'控制平面读取失败','control-error'))}}
 // Frontend-only presentation guard: if reason already contains the required
 // three parts, do not render strengths and score_band_reason a second time.
 function metricEnhanced(parent,dim,m){let v=m?.value??m?.score??'not_evaluable',d=node('div',undefined,'metric'),head=node('div',undefined,'metric-head');head.append(node('span',label(dim)));head.append(node('b',typeof v==='number'?String(v):val(v),valueClass(v)));d.append(head);if(typeof v==='number'){let bar=node('div',undefined,`score-bar ${v===0?'score-zero':''}`),i=document.createElement('i');i.style.width=`${Math.max(0,Math.min(100,v))}%`;bar.append(i);d.append(bar)}let details=node('details');details.open=true;details.append(node('summary','评分依据（证据 / 优点与不足 / 评分档位）'));let reason=String(m?.reason??m?.basis??m?.explanation??'不可评估'),hasThreePart=reason.includes('优点与不足')||reason.includes('评分档位依据');let evidence=node('div',undefined,'reason');evidence.append(node('strong',hasThreePart?'评审依据：':'证据事实：'));renderValue(evidence,reason);details.append(evidence);if(!hasThreePart){let strengths=node('div',undefined,'reason');strengths.append(node('strong','优点与不足：'));renderValue(strengths,m?.strengths??m?.limitations??'见上述证据与评审结论');details.append(strengths);let band=node('div',undefined,'reason');band.append(node('strong','评分档位依据：'));renderValue(band,m?.score_band_reason??m?.scoring_basis??'该分数依据本维度可核验事实、可比性和证据完整度确定；不可评估不等于 0 分。');details.append(band)}let refs=node('div');refs.append(node('strong','引用来源'));for(let ref of (m?.evidence_refs||m?.evidence||[]))refs.append(node('div',String(ref),'quote'));details.append(refs);d.append(details);parent.append(d)}
@@ -302,5 +351,5 @@ let vcBtn=$('version-compare-btn');if(vcBtn)vcBtn.onclick=()=>loadVersionCompare
  let initialPanel=new URLSearchParams(location.search).get('panel');
  let initialView=new URLSearchParams(location.search).get('view');
  if(initialView==='version-compare'){loadFilters().then(()=>loadVersionCompare()).catch(e=>msg(e.message));setInterval(pollEvaluationVersions,30000)}
- else if(initialPanel==='dataset'||initialPanel==='workflow'||initialPanel==='versions'||initialPanel==='prospective')openControlPanel(initialPanel);else{loadFilters().then(loadSamples).catch(e=>msg(e.message));setInterval(pollEvaluationVersions,30000)}
+ else if(initialPanel==='dataset'||initialPanel==='workflow'||initialPanel==='versions'||initialPanel==='prospective'||initialPanel==='f1')openControlPanel(initialPanel);else{loadFilters().then(loadSamples).catch(e=>msg(e.message));setInterval(pollEvaluationVersions,30000)}
 </script></body></html>
