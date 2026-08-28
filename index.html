@@ -244,18 +244,32 @@ function renderF1Control(data){
     if(r.exclusion)exParts.push(b.model_label+':'+r.exclusion)}
    row.append(node('td',exParts.join('；'),'control-muted'))}
   dSec.append(dt);holder.append(dSec)}
- apply.onclick=draw;
- draw();
- // ---- 运行版本维度对比（同页追加；失败不影响上方 F1 内容） ----
+ // ---- 运行版本维度对比：与上方批次选择共用同一筛选 ----
+ // 数据只在首次加载一次并缓存；之后每次「按所选批次刷新」都对缓存做交集过滤。
  let vcSec=node('section',undefined,'control-section');
- vcSec.append(node('h3','运行版本维度对比（评估版本 × 16 维）'));
+ vcSec.append(node('h3','运行版本维度对比（与上方批次选择联动）'));
  vcSec.append(node('div','正在读取各运行版本评估样本……','control-muted'));
  root.append(vcSec);
- (async function(){
+ let vcCache=null; // {byId: {version_id -> perVersion entry}, missing: [batch_id 无版本工件]}
+ function vcRender(){
+  if(!vcCache)return;
+  let picked=data.batches.filter(b=>boxes[b.batch_id]&&boxes[b.batch_id].checked);
+  let pickedIds=picked.map(b=>b.batch_id);
+  let perVersion=pickedIds.map(id=>vcCache.byId[id]).filter(Boolean);
+  let missing=pickedIds.filter(id=>!vcCache.byId[id]);
+  let head=node('h3','运行版本维度对比（与上方批次选择联动'+(perVersion.length===1?' · 单版本视图':' · '+perVersion.length+' 个版本对比')+'）');
+  if(!vcCache||(!perVersion.length&&!missing.length))return;
+  if(!perVersion.length){
+   let sec=node('section',undefined,'control-section');sec.append(node('h3','无三轴评估工件的所选批次（'+missing.length+' 个，仅参与上方 F1，不参与本对比）'));for(let m of missing)sec.append(node('p',m,'control-muted'));sec.append(node('p','所选批次都没有对应的三轴评估版本工件，无法做维度对比。','control-muted'));vcSec.replaceChildren(head,sec);return}
+  vcSec.replaceChildren(head,renderVersionCompareInto(vcSec,perVersion,missing,pickedIds));
+ }
+ async function vcLoad(){
   try{
+   if(vcCache){vcRender();return}
    let versions=await fetch(liveApiBase()+'/api/evaluation/versions').then(r=>{if(!r.ok)throw Error('接口错误 '+r.status);return r.json()});
-   let usable=versions.filter(x=>x.artifact_status==='valid');
-   let perVersion=[];
+   let want=new Set(data.batches.map(b=>b.batch_id));
+   let usable=versions.filter(x=>x.artifact_status==='valid'&&want.has(x.version_id));
+   let byId={};
    for(let v of usable){
     let summary=await fetch(liveApiBase()+'/api/evaluation/version/'+encodeURIComponent(v.version_id)+'/summary').then(r=>r.json());
     let models=Object.keys(summary.models||{});
@@ -264,12 +278,15 @@ function renderF1Control(data){
      let doc=await fetch(liveApiBase()+'/api/evaluation/version/'+encodeURIComponent(v.version_id)+'/models/'+encodeURIComponent(model)+'/trials?limit=100').then(r=>{if(!r.ok)throw Error('接口错误 '+r.status);return r.json()});
      trials=trials.concat((doc.trials||[]).map(x=>normalizeTrialSummary(x,v.version_id)));
     }
-    perVersion.push({version_id:v.version_id,models,trials,stats:vcDimStats(trials)});
+    byId[v.version_id]={version_id:v.version_id,models,trials,stats:vcDimStats(trials)};
    }
-   let sub=renderVersionCompareInto(vcSec,perVersion);
-   vcSec.replaceChildren(node('h3','运行版本维度对比（评估版本 × 16 维）'),sub);
-  }catch(e){vcSec.replaceChildren(node('h3','运行版本维度对比（评估版本 × 16 维）'),node('p','版本对比加载失败：'+(e instanceof Error?e.message:String(e)),'control-muted'))}
- })();
+   vcCache={byId};
+   vcRender();
+  }catch(e){vcSec.replaceChildren(node('h3','运行版本维度对比（与上方批次选择联动）'),node('p','版本对比加载失败：'+(e instanceof Error?e.message:String(e)),'control-muted'))}
+ }
+ apply.onclick=()=>{draw();vcRender()};
+ draw();
+ vcLoad();
 }
 async function openControlPanel(panel){document.querySelector('.filters').style.display='none';document.querySelector('.toolbar-note').style.display='none';$('list').hidden=true;$('detail').hidden=true;$('compare-view').hidden=true;$('control-panel').classList.add('active');let content=$('control-content');content.append(node('div','正在读取控制平面…','empty'));try{if(panel==='dataset'){let data=await controlApi('/api/control/datasets/prediction_ready_13912');let trials=await controlApi('/api/control/datasets/prediction_ready_13912/trials?limit=50');renderDatasetControl(data,trials)}else if(panel==='workflow'){let data=await controlApi('/api/control/workflow');renderWorkflowControl(data);renderDetailedReplicationGuide($('control-content'),data);renderReplicationChecklist($('control-content'))}else if(panel==='prospective'){renderProspectiveControl(await controlApi('/api/control/prospective/dashboard'))}else if(panel==='f1'){renderF1Control(await controlApi('/api/control/f1/catalog'))}else{let records=await controlApi('/api/control/versions');let retrospectives=await controlApi('/api/control/retrospectives');renderVersionsControl(records,retrospectives);renderVersionSnapshots(records)}}catch(error){content.replaceChildren(node('div',error instanceof Error?error.message:'控制平面读取失败','control-error'))}}
 // Frontend-only presentation guard: if reason already contains the required
@@ -340,16 +357,23 @@ function metricEnhanced(parent,dim,m){let v=m?.value??m?.score??'not_evaluable',
    renderVersionCompare(view,perVersion);msg('版本对比已加载');
   }catch(e){view.replaceChildren(node('div',e instanceof Error?e.message:'版本对比加载失败','control-error'))}
  }
- function renderVersionCompareInto(root,perVersion){
+ function renderVersionCompareInto(root,perVersion,missing,pickedIds){
   let frag=document.createDocumentFragment();
+  let single=perVersion.length===1;
   let hero=node('section',undefined,'control-hero');
-  hero.append(node('h2','运行版本维度对比'),
-   node('p','口径：每个维度 = 该版本全部样本中数值型得分的算术平均（not_evaluable 排除于分子与分母，n=0 显示「—」）；轴小计 = 该轴各维度均值再平均；综合总分 = 16 个维度均值再取算术平均（仅对 n>0 维度，不加权）。Δ 列 = 首列版本减去末列版本，正数表示首列更高。此对比仅在静态部署页计算，用于人工浏览，不回写任何评估工件。','control-muted'));
+  hero.append(node('h2','运行版本维度对比'+(single?'（单版本视图）':'')),
+   node('p',(single?'当前只勾选了 1 个有评估工件的批次：下表为该版本自身的 16 维均值，没有 Δ 对比列；如需对比请多勾选批次。':'口径：每个维度 = 该版本全部样本中数值型得分的算术平均（not_evaluable 排除于分子与分母，n=0 显示「—」）；轴小计 = 该轴各维度均值再平均；综合总分 = 16 个维度均值再取算术平均（仅对 n>0 维度，不加权）。Δ 列 = 首列版本减去末列版本，正数表示首列更高。')+'此对比仅在静态部署页计算，用于人工浏览，不回写任何评估工件。','control-muted'));
   frag.append(hero);
+  if(missing&&missing.length){
+   let miss=node('section',undefined,'control-section');
+   miss.append(node('h3','无三轴评估工件的所选批次（'+missing.length+' 个，仅参与上方 F1，不参与本对比）'));
+   for(let m of missing)miss.append(node('p',m,'control-muted'));
+   frag.append(miss);
+  }
   // axis-subtotal summary table (the "which version wins where" view)
-  let summ=node('section',undefined,'control-section');summ.append(node('h3','轴小计对比（先看这张：总分接近但各轴互有胜负）'));
+  let summ=node('section',undefined,'control-section');summ.append(node('h3',single?'轴小计（单版本）':'轴小计对比（先看这张：总分接近但各轴互有胜负）'));
   let st=document.createElement('table');st.className='control-table';let sh=st.insertRow();
-  ['评估轴',...perVersion.map(p=>p.version_id),'Δ（首列−末列）'].forEach(x=>sh.append(node('th',x)));
+  (single?['评估轴',...perVersion.map(p=>p.version_id)]:['评估轴',...perVersion.map(p=>p.version_id),'Δ（首列−末列）']).forEach(x=>sh.append(node('th',x)));
   for(let axis of Object.keys(VC_AXES)){
    let row=st.insertRow();row.append(node('td',AX[axis]));
    let first=null,last=null;
@@ -359,10 +383,12 @@ function metricEnhanced(parent,dim,m){let v=m?.value??m?.score??'not_evaluable',
     if(first==null)first=m;last=m;
     row.append(node('td',m==null?'—':vcFmt(m)));
    }
-   let delta=(first!=null&&last!=null)?first-last:null;
-   let dCell=node('td',delta==null?'—':(delta>0?'+':'')+vcFmt(delta));
-   if(delta!=null){dCell.style.color=delta>0?'var(--green)':delta<0?'var(--red)':'var(--muted)';dCell.style.fontWeight='700'}
-   row.append(dCell);
+   if(!single){
+    let delta=(first!=null&&last!=null)?first-last:null;
+    let dCell=node('td',delta==null?'—':(delta>0?'+':'')+vcFmt(delta));
+    if(delta!=null){dCell.style.color=delta>0?'var(--green)':delta<0?'var(--red)':'var(--muted)';dCell.style.fontWeight='700'}
+    row.append(dCell);
+   }
   }
   // composite row
   let crow=st.insertRow();crow.append(node('td','综合总分（16维均值再平均）'));
@@ -373,26 +399,30 @@ function metricEnhanced(parent,dim,m){let v=m?.value??m?.score??'not_evaluable',
    if(firstC==null)firstC=c;lastC=c;
    crow.append(node('td',c==null?'—':vcFmt(c)));
   }
-  let cd=(firstC!=null&&lastC!=null)?firstC-lastC:null;
-  let cdCell=node('td',cd==null?'—':(cd>0?'+':'')+vcFmt(cd));
-  if(cd!=null){cdCell.style.color=cd>0?'var(--green)':cd<0?'var(--red)':'var(--muted)';cdCell.style.fontWeight='700'}
-  crow.append(cdCell);
+  if(!single){
+   let cd=(firstC!=null&&lastC!=null)?firstC-lastC:null;
+   let cdCell=node('td',cd==null?'—':(cd>0?'+':'')+vcFmt(cd));
+   if(cd!=null){cdCell.style.color=cd>0?'var(--green)':cd<0?'var(--red)':'var(--muted)';cdCell.style.fontWeight='700'}
+   crow.append(cdCell);
+  }
   summ.append(st);
   summ.append(node('p','读法：综合总分接近不代表两个版本实力相当——正负 Δ 在轴之间方向相反时会互相抵消。请结合下方逐维度表定位各自的优势轴与短板轴。','control-muted'));
   frag.append(summ);
   // per-dimension tables grouped by axis, with delta column vs last version
   for(let axis of Object.keys(VC_AXES)){
-   let sec=node('section',undefined,'control-section');sec.append(node('h3',AX[axis]+'（逐维度均值 + Δ）'));
+   let sec=node('section',undefined,'control-section');sec.append(node('h3',AX[axis]+(single?'（逐维度均值）':'（逐维度均值 + Δ）')));
    let t=document.createElement('table');t.className='control-table';let hrow=t.insertRow();
-   ['维度',...perVersion.map(p=>p.version_id),'Δ（首列−末列）'].forEach(x=>hrow.append(node('th',x)));
+   (single?['维度',...perVersion.map(p=>p.version_id)]:['维度',...perVersion.map(p=>p.version_id),'Δ（首列−末列）']).forEach(x=>hrow.append(node('th',x)));
    for(let dim of VC_AXES[axis]){
     let row=t.insertRow();row.append(node('td',DIM[dim]||dim));
     let first=null,last=null;
     for(let pv of perVersion){let stt=pv.stats[axis+'|'+dim];if(first==null)first=stt.mean;last=stt.mean;row.append(node('td',stt.mean==null?'—':vcFmt(stt.mean)+'（n='+stt.n+'）'))}
-    let d=(first!=null&&last!=null)?first-last:null;
-    let cell=node('td',d==null?'—':(d>0?'+':'')+vcFmt(d));
-    if(d!=null){cell.style.color=Math.abs(d)>=5?(d>0?'var(--green)':'var(--red)'):'var(--muted)';if(Math.abs(d)>=5)cell.style.fontWeight='700'}
-    row.append(cell);
+    if(!single){
+     let d=(first!=null&&last!=null)?first-last:null;
+     let cell=node('td',d==null?'—':(d>0?'+':'')+vcFmt(d));
+     if(d!=null){cell.style.color=Math.abs(d)>=5?(d>0?'var(--green)':'var(--red)'):'var(--muted)';if(Math.abs(d)>=5)cell.style.fontWeight='700'}
+     row.append(cell);
+    }
    }
    sec.append(t);frag.append(sec);
   }
