@@ -187,18 +187,36 @@ let mt=document.createElement('table');mt.className='control-table';let mh=mt.in
 ['模型','口径','N','TP','FP','FN','TN','Accuracy','Precision','Recall','Specificity','F1(success)'].forEach(x=>mh.append(node('th',x)));
 function fmt(x){return typeof x==='number'?(Math.round(x*1000)/10).toFixed(1)+'%':'—'}
 for(let [model,md] of Object.entries(data.models||{})){
- for(let [title,key] of [['严格 Gold（第一层）','strict_significance_gold'],['扩展 Gold（合并口径）','extended_with_direction_gold']]){
+ for(let [title,key] of [['严格 Gold（第一层）','strict_significance_gold'],['扩展 Gold（合并口径）','extended_with_direction_gold'],['严格 Gold + P1T 回退','P1T_strict'],['扩展 Gold + P1T 回退','P1T_extended']]){
   let m=(md||{})[key]||{};let row=mt.insertRow();
-  if(key==='strict_significance_gold'){let c=node('td',model);c.rowSpan=2;row.append(c)}
+  if(key==='strict_significance_gold'){let c=node('td',model);c.rowSpan=4;row.append(c)}
   row.append(node('td',title));
   [m.n,m.tp,m.fp,m.fn,m.tn].forEach(x=>row.append(node('td',controlText(x))));
   [m.accuracy,m.precision,m.recall,m.specificity,m.f1].forEach(x=>row.append(node('td',fmt(x))));
  }}
 mSec.append(mt);
 mSec.append(node('p','读法：Kimi 高召回低特异（倾向预测 success）；DeepSeek 两类均衡，合并口径下各项指标同时上升。两口径数字不同源于 Gold 覆盖不同（严格 38-39 条 vs 扩展 48-51 条），不是模型变化。','control-muted'));root.append(mSec);
+let aSec=node('section',undefined,'control-section');aSec.append(node('h3','被排除试验归因（缺字段 ≠ 预测错误）'));
+let at=document.createElement('table');at.className='control-table';let ah=at.insertRow();
+['归因','含义','Kimi 条数','DeepSeek 条数'].forEach(x=>ah.append(node('th',x)));
+let attrMeanings={'gold_null':'实际结局不可派生（CT.gov 结果统计缺失/无配对组数据）——数据天花板，无法评分，不是模型问题','no_primary_listed':'模型没有输出任何 primary 终点预测（契约/提取问题，不是预测错误）','all_primaries_not_evaluable':'primary 终点全部标 not_evaluable（模型拒判，非错误）','uncertain_call_without_P':'终点判断 uncertain 且无概率可二值化（字段缺失，非错误）'};
+let aCounts={};
+for(let [m,md] of Object.entries(data.models||{})){let c=((data.exclusion_attribution||{})[m]||{}).counts||{};aCounts[m]=c}
+let merged={};
+for(let m of Object.keys(aCounts)){for(let [k,v] of Object.entries(aCounts[m])){let clean=k.split('（')[0];merged[clean]=merged[clean]||{};merged[clean][m]=(merged[clean][m]||0)+v}}
+for(let k of Object.keys(attrMeanings)){
+ if(!merged[k])continue;
+ let row=at.insertRow();
+ row.append(node('td',k));
+ row.append(node('td',attrMeanings[k],'control-muted'));
+ row.append(node('td',String(merged[k].Kimi||0)));
+ row.append(node('td',String(merged[k].DeepSeek||0)))}
+aSec.append(at);
+aSec.append(node('p','结论：两个模型各有 7-8 条进不了 F1 分母，其中 Kimi 5 条 / DeepSeek 3 条是「预测侧缺可判定字段」（模型没给 primary 判定或没给概率），其余是 Gold 不可派生。这些都不计入预测错误。敏感性口径 P1T（弃权时回退到模型自己的 trial-level 判定）见上表 P1T 列。','control-muted'));
+root.append(aSec);
 let dSec=node('section',undefined,'control-section');dSec.append(node('h3','逐试验判定（'+'75'+' 条）'));
 let dt=document.createElement('table');dt.className='control-table';let dh=dt.insertRow();
-['NCT ID','Kimi 预测(P1)','Kimi 严格判定','Kimi 扩展判定','DeepSeek 预测(P1)','DeepSeek 严格判定','DeepSeek 扩展判定','Gold(严格)','Gold(合并)'].forEach(x=>dh.append(node('th',x)));
+['NCT ID','Kimi 预测(P1)','Kimi 严格','Kimi 扩展','Kimi P1T 严格','Kimi P1T 扩展','DeepSeek 预测(P1)','DeepSeek 严格','DeepSeek 扩展','DeepSeek P1T 严格','DeepSeek P1T 扩展','Gold(严格)','Gold(合并)','排除归因'].forEach(x=>dh.append(node('th',x)));
 let kimi=(data.models||{}).Kimi||{},ds=(data.models||{}).DeepSeek||{};
 let km={};for(let r of kimi.per_trial||[])km[r.nct_id]=r;
 let dm={};for(let r of ds.per_trial||[])dm[r.nct_id]=r;
@@ -209,11 +227,18 @@ for(let nct of Object.keys(km)){
  row.append(node('td',controlText(a.prediction_P1)));
  row.append(node('td',mark(a.correct_strict)));
  row.append(node('td',mark(a.correct_merged)));
+ row.append(node('td',mark(a.correct_strict_P1T)));
+ row.append(node('td',mark(a.correct_merged_P1T)));
  row.append(node('td',controlText(b.prediction_P1)));
  row.append(node('td',mark(b.correct_strict)));
  row.append(node('td',mark(b.correct_merged)));
+ row.append(node('td',mark(b.correct_strict_P1T)));
+ row.append(node('td',mark(b.correct_merged_P1T)));
  row.append(node('td',controlText(a.gold_tier1)));
- row.append(node('td',controlText(a.gold_merged)))}
+ row.append(node('td',controlText(a.gold_merged)));
+ let exLabel=(a.exclusion||b.exclusion||'');
+ let pSide=a.prediction_side||b.prediction_side||'';
+ row.append(node('td',exLabel?exLabel+(pSide&&pSide!==exLabel?'（预测侧:'+pSide+'）':''):'','control-muted'))}
 dSec.append(dt);root.append(dSec)}
 async function openControlPanel(panel){document.querySelector('.filters').style.display='none';document.querySelector('.toolbar-note').style.display='none';$('list').hidden=true;$('detail').hidden=true;$('compare-view').hidden=true;$('control-panel').classList.add('active');let content=$('control-content');content.append(node('div','正在读取控制平面…','empty'));try{if(panel==='dataset'){let data=await controlApi('/api/control/datasets/prediction_ready_13912');let trials=await controlApi('/api/control/datasets/prediction_ready_13912/trials?limit=50');renderDatasetControl(data,trials)}else if(panel==='workflow'){let data=await controlApi('/api/control/workflow');renderWorkflowControl(data);renderDetailedReplicationGuide($('control-content'),data);renderReplicationChecklist($('control-content'))}else if(panel==='prospective'){renderProspectiveControl(await controlApi('/api/control/prospective/dashboard'))}else if(panel==='f1'){renderF1Control(await controlApi('/api/control/f1'))}else{let records=await controlApi('/api/control/versions');let retrospectives=await controlApi('/api/control/retrospectives');renderVersionsControl(records,retrospectives);renderVersionSnapshots(records)}}catch(error){content.replaceChildren(node('div',error instanceof Error?error.message:'控制平面读取失败','control-error'))}}
 // Frontend-only presentation guard: if reason already contains the required
