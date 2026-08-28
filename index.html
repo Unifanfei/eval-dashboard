@@ -153,7 +153,7 @@ let sum=node('summary',`终点 ${controlText(ep.endpoint_id)} · ${controlText(e
 ed.append(sum);
 let v=ep.value||{};
 let body=node('div',undefined,'reason');
-body.textContent=`判断：${controlText(v.endpoint_met_call)} · P(达标)：${controlText(v.probability_endpoint_met)} · 指标：${controlText(v.effect_measure)} · 点估计：${controlText(v.effect_point)} · 方向：${controlText(ep.direction)}`;
+body.textContent=`判断：${controlText(v.endpoint_met_call)} · P(达标)：${controlText(v.probability_endpoint_met)} · 指标：${controlText(v.effect_measure)} · 点估计：${controlText(v.effect_point)} · 方向：${controlText(ep.direction||v.direction)}`;
 if(ep.rationale)body.append(node('div',ep.rationale));
 ed.append(body);d.append(ed)}
 if((item.evidence_urls||[]).length){
