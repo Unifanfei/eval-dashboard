@@ -127,21 +127,81 @@ function renderDatasetControl(data,trials){let root=$('control-content');root.re
 function renderWorkflowControl(data){let root=$('control-content');root.replaceChildren();root.append(controlHeader('标准化工作流','这是固定、可复刻的权威流程。每一步都有唯一负责 Agent、输入、输出、门禁、失败处理和工件；前一步未完成时禁止进入下一步。'));let section=node('section',undefined,'control-section');section.append(node('h3',`${controlText(data.workflow_version)} · 不可直接修改`));for(let [index,step] of (data.steps||[]).entries()){let row=node('div',undefined,'control-step');row.append(node('div',String(index+1),'control-step-num'));let body=node('div');body.append(node('strong',controlText(step.label)),node('p',`负责 Agent：${controlText(step.agent)}`,'control-muted'));body.append(node('span','必须按序执行','control-pill'),node('span','必须启动回执','control-pill'));let details=document.createElement('details');details.append(node('summary','查看本步骤完整契约'));for(let [title,key] of [['步骤目的','purpose'],['执行顺序','execution_order'],['输入','inputs'],['必需输出','outputs'],['前置门禁','gates'],['失败处理','failure'],['必须留存工件','artifacts']]){let block=node('div',undefined,'reason');block.append(node('strong',title+'：'));renderValue(block,step[key]||'未定义');details.append(block)}body.append(details);row.append(body);section.append(row)}root.append(section);let guide=node('section',undefined,'control-section');guide.append(node('h3','外部 Agent / 人工复刻指引'));guide.append(node('pre',`1. 锁定 prediction_ready_13912 完整 manifest，不在数据集页做模型筛选。\n2. 读取模型 knowledge_cutoff，只保留结果日期严格晚于 cutoff 的 NCT。\n3. 启动 tool-gate，所有工具调用执行日期拦截并保存原始事件。\n4. 加载预测 Prompt，动态注入当前 NCT 的组别、终点、时间点和统计目标，不注入 Gold。\n5. 每个 NCT 独立预测，保存完整 system/user prompt、搜索上下文、原始输出和解析结果。\n6. 预测结束先冻结并校验 hash；冻结失败禁止评估。\n7. 每次只把一个 NCT packet 和该 NCT Gold 交给内部 Codex Sub-Agent。\n8. 评估输出必须包含逐终点值比对、三轴 reason、human_readable_report，不生成综合分数。\n9. 完成后追加批次复盘；任何历史工件只能新增版本，不能覆盖。`,'control-code'));root.append(guide)}
 function renderVersionsControl(records,retrospectives){let root=$('control-content');root.replaceChildren();root.append(controlHeader('版本迭代管理','Prompt、Harness、预测冻结和评估复盘均只读；历史记录只能通过新增版本延续。'));let section=node('section',undefined,'control-section');section.append(node('h3','Prompt / Harness 版本记录'));let table=document.createElement('table');table.className='control-table';let head=table.insertRow();['版本','类型','变更原因','优点','缺点','改进措施'].forEach(x=>head.append(node('th',x)));for(let record of records){let row=table.insertRow();[record.version_id,record.kind,record.change_reason,record.strengths,record.weaknesses,record.improvements].forEach(x=>row.append(node('td',Array.isArray(x)?x.join('；'):controlText(x))))}if(!records.length){let row=table.insertRow();let cell=row.insertCell();cell.colSpan=6;cell.textContent='暂无版本记录；请先登记 Prompt 或 Harness 的不可变快照。'}section.append(table);root.append(section);let retro=node('section',undefined,'control-section');retro.append(node('h3','实验批次复盘'));let rt=document.createElement('table');rt.className='control-table';let rh=rt.insertRow();['批次','数据集','预测 Prompt','评估 Prompt','Harness','问题','后续动作'].forEach(x=>rh.append(node('th',x)));for(let record of retrospectives){let row=rt.insertRow();[record.batch_id,record.dataset_id,record.prediction_prompt_version,record.evaluation_prompt_version,record.harness_version,record.problems,record.next_actions].forEach(x=>row.append(node('td',Array.isArray(x)?x.join('；'):controlText(x))))}if(!retrospectives.length){let row=rt.insertRow();let cell=row.insertCell();cell.colSpan=7;cell.textContent='暂无已归档批次复盘；预测与评估完成后由 retrospective-writer 追加，不自动编造。'}retro.append(rt);root.append(retro)}
 function renderVersionSnapshots(records){let table=document.querySelector('#control-content .control-table');if(!table)return;for(let record of records||[]){let row=table.insertRow();let cell=row.insertCell();cell.colSpan=6;let details=document.createElement('details');let title=record.kind==='prediction_prompt'?'查看完整预测 Prompt（System Prompt / User Prompt 动态模板）':record.kind==='evaluation_prompt'?'查看完整评估 Prompt（Codex Sub-Agent）':'查看完整 Harness 架构源码与门禁实现';details.append(node('summary',`${title} · ${controlText(record.version_id)}`));let meta=node('div',undefined,'reason');meta.append(node('strong','来源与状态：'));renderValue(meta,{source_path:record.source_path||'未提供',historical_import:record.historical_import===true?'历史只读导入':'正式版本记录',previous_version_id:record.previous_version_id||'无',created_at:record.created_at||'未登记'});details.append(meta);let strengths=node('div',undefined,'reason');strengths.append(node('strong','当前版本优点：'));renderValue(strengths,record.strengths||'未提供');details.append(strengths);let weaknesses=node('div',undefined,'reason');weaknesses.append(node('strong','当前版本缺点：'));renderValue(weaknesses,record.weaknesses||'未提供');details.append(weaknesses);let improvements=node('div',undefined,'reason');improvements.append(node('strong','改进措施：'));renderValue(improvements,record.improvements||'未提供');details.append(improvements);let snapshot=node('pre',record.prompt_text||'未提供完整文本快照','control-code');snapshot.style.maxHeight='520px';snapshot.style.overflow='auto';details.append(snapshot);cell.append(details)}}
-function refreshProspectiveCountdown(){for(let row of document.querySelectorAll('tr[data-expected-date]')){let dateText=row.dataset.expectedDate;if(!dateText||!row.cells[4])continue;let target=new Date(`${dateText}T23:59:59`);let days=Math.ceil((target-Date.now())/86400000);row.cells[4].textContent=days<0?`已超过预计日期 ${Math.abs(days)} 天`:`距预计结果 ${days} 天`}}
-function renderProspectiveControl(data){let root=$('control-content');root.replaceChildren();root.append(controlHeader('前瞻性试验总览看板','只读展示冻结的前瞻性队列、预计结果时间和已有预测/评估工件；页面不自行发起模型调用或计算准确率。'));let stats=node('div',undefined,'control-grid');[['总前瞻性试验数量','total_trials'],['已完成预测','predicted_trials'],['待预测','pending_prediction_trials'],['预测结局分布','prediction_outcome_distribution'],['主要终点聚合','primary_rollup_distribution'],['主要终点二值化','primary_binarized_distribution'],['7天内到期','due_within_7_days'],['30天内到期','due_within_30_days'],['已出结果待评估','result_observed_pending_evaluation'],['已完成评估','completed_evaluation'],['预测准确率均值','accuracy_mean']].forEach(([labelText,key])=>controlStat(stats,labelText,['prediction_outcome_distribution','primary_rollup_distribution','primary_binarized_distribution'].includes(key)&&data[key]&&typeof data[key]==='object'?Object.entries(data[key]).map(([k,v])=>k+' '+v).join(' · '):data[key],key==='accuracy_mean'?data.accuracy_note:(key==='prediction_outcome_distribution'?'按最新一次预测的试验结局分类计数（后端统计）':key==='primary_rollup_distribution'?data.primary_rollup_rule:key==='primary_binarized_distribution'?data.primary_binarize_rule:'后端静态看板统计')));root.append(stats);let note=node('section',undefined,'control-section');note.append(node('h3','状态与数据边界'));note.append(node('p',`数据源：${controlText(data.source)}；截至：${controlText(data.as_of)}；静态模式：${data.static_only?'是':'否'}`,'control-muted'));note.append(node('p',data.accuracy_note,'control-muted'));root.append(note);let section=node('section',undefined,'control-section');section.append(node('h3','前瞻性试验列表'));let table=document.createElement('table');table.className='control-table';let head=table.insertRow();['试验 ID','适应症','试验终点','预计结果出炉时间','倒计时','当前状态','最新预测版本','主要终点聚合','二值化判定','方向利好数','下次预测时间','操作'].forEach(x=>head.append(node('th',x)));for(let trial of data.trials||[]){let row=table.insertRow();row.dataset.expectedDate=trial.expected_result_date||'';let countdown=trial.days_to_expected_result===null?'未记录':trial.days_to_expected_result<0?`已超过预计日期 ${Math.abs(trial.days_to_expected_result)} 天`:`距预计结果 ${trial.days_to_expected_result} 天`;let endpointText=(trial.endpoints||[]).map(x=>`${x.role||''} ${x.measure||'未记录'}`).join('；')||'注册快照未提供终点';[trial.nct_id,(trial.indication||[]).join('、')||'未记录',endpointText,trial.expected_result_date||'未记录',countdown,trial.status||'待预测',trial.latest_prediction_version||'未生成',trial.primary_rollup||'未预测',trial.primary_binarized||'未预测',trial.primary_direction_favorable!=null?trial.primary_direction_favorable:'—',trial.next_prediction_at||'未配置'].forEach(x=>row.append(node('td',controlText(x))));let action=node('td');let b=node('button','查看周期历史','light');b.onclick=()=>loadProspectiveTrial(trial.nct_id);action.append(b);row.append(action)}section.append(table);root.append(section);refreshProspectiveCountdown();if(window.__prospectiveTimer)clearInterval(window.__prospectiveTimer);window.__prospectiveTimer=setInterval(refreshProspectiveCountdown,60000)}
-async function loadProspectiveTrial(nctId){try{let data=await controlApi('/api/control/prospective/trials/'+encodeURIComponent(nctId));let root=$('control-content');let back=node('button','返回前瞻性列表','light');back.onclick=()=>openControlPanel('prospective');root.replaceChildren(controlHeader(`${nctId} · 多周期预测结果对比`,'当前仅展示已经冻结并可读取的历史记录，不补写缺失周期、不生成准确率。'),back);let box=node('section',undefined,'control-section');box.append(node('h3','预测历史'));if(!(data.prediction_history||[]).length){box.append(node('p',data.history_note||'暂无冻结预测历史。','control-muted'))}
+function refreshProspectiveCountdown(){for(let row of document.querySelectorAll('tr[data-expected-date]')){let dateText=row.dataset.expectedDate;if(!dateText||!row.cells[5])continue;let target=new Date(`${dateText}T23:59:59Z`);let days=Math.ceil((target-Date.now())/86400000);row.cells[5].textContent=days<0?`预计日期已过 ${Math.abs(days)} 天，尚未完成公开结果核查`:`距预计完成 ${days} 天`}}
+function renderProspectiveControl(data){let root=$('control-content');root.replaceChildren();root.append(controlHeader('前瞻性试验总览看板（四状态模型）','只读展示冻结的前瞻性队列、公开结果核查、预测状态与评估状态；四套状态相互独立，页面不合并它们、不自行发起模型调用或计算准确率。'));
+ // ---- 1. 数据边界卡片 ----
+ let b=data.data_boundary||{};
+ let stats=node('div',undefined,'control-grid');
+ controlStat(stats,'候选试验总数',b.total_candidate_trials!=null?b.total_candidate_trials:data.source_candidate_trials,'原始前瞻性候选池（≠可预测队列）');
+ controlStat(stats,'已核查可预测',b.audited_prediction_eligible!=null?b.audited_prediction_eligible:data.total_trials,'public_source_audit=无注册结果');
+ controlStat(stats,'已排除',b.excluded!=null?b.excluded:data.excluded_by_public_result_gate,'有公开结果 30 + 有公告无结果 12');
+ controlStat(stats,'待核查',b.pending_audit!=null?b.pending_audit:878,'不能直接判断为无结果');
+ root.append(stats);
+ // ---- 2. 公开结果核查分布 ----
+ let auditSec=node('section',undefined,'control-section');auditSec.append(node('h3','公开结果核查分布（'+((data.public_result_audit_counts&&Object.values(data.public_result_audit_counts).reduce((a,c)=>a+c,0))||995)+' 条候选）'));
+ let at=document.createElement('table');at.className='control-table';let ah=at.insertRow();
+ ['核查状态','数量','含义'].forEach(x=>ah.append(node('th',x)));
+ for(let [k,meaning] of [['无注册结果','已完成公开来源核查，当前允许进入前瞻预测'],['有公开结果','必须排除，不得发起预测'],['有公告无结果','当前规则下暂不进入，需单独核查'],['待核查','尚未完成核查，不能直接判断为无结果']]){
+  let row=at.insertRow();row.append(node('td',k));row.append(node('td',controlText((data.public_result_audit_counts||{})[k])));row.append(node('td',meaning,'control-muted'))}
+ auditSec.append(at);root.append(auditSec);
+ // ---- 3. 预测状态分布 ----
+ let ps=data.prediction_status_distribution||{};
+ let pstats=node('div',undefined,'control-grid');
+ controlStat(pstats,'预测状态：已冻结',ps['已冻结'],'存在冻结 structured_prediction');
+ controlStat(pstats,'预测状态：已冻结（恢复投影）',ps['已冻结（恢复投影）'],'原始结构化缺失，仅只读恢复投影');
+ controlStat(pstats,'预测状态：待预测',ps['待预测'],'尚无任何成功冻结的预测');
+ root.append(pstats);
+ let pn=node('section',undefined,'control-section');pn.append(node('h3','状态口径说明'));
+ pn.append(node('p',data.provenance_note||'','control-muted'));
+ pn.append(node('p','四套状态独立：公开结果核查 / 预测状态 / 官方结果状态（当前全部 未发现）/ 评估状态（当前全部 不适用）。预计完成日期不是官方结果发布日期。','control-muted'));
+ pn.append(node('p','最新预测选择：'+(data.latest_selection_rule||'按 frozen_at 时间戳'),'control-muted'));
+ pn.append(node('p','发现的预测批次（目录发现，非硬编码）：'+((data.prediction_runs||[]).map(r=>r.run_id+'（'+r.scope+'，成功 '+r.n_succeeded+'）').join('；')||'无'),'control-muted'));
+ root.append(pn);
+ // ---- 投影分布（保留原有聚合信息） ----
+ let dist=node('div',undefined,'control-grid');
+ controlStat(dist,'预测结局分布',Object.entries(data.prediction_outcome_distribution||{}).map(([k,v])=>k+' '+v).join(' · ')||'—','按最新一次预测的试验结局分类计数（后端统计）');
+ controlStat(dist,'主要终点聚合',Object.entries(data.primary_rollup_distribution||{}).map(([k,v])=>k+' '+v).join(' · ')||'—',data.primary_rollup_rule);
+ controlStat(dist,'二值化判定',Object.entries(data.primary_binarized_distribution||{}).map(([k,v])=>k+' '+v).join(' · ')||'—',data.primary_binarize_rule);
+ root.append(dist);
+ // ---- 4. 试验列表（四状态） ----
+ let section=node('section',undefined,'control-section');section.append(node('h3','试验列表（'+(data.total_trials||0)+' 条已核查可预测队列）'));
+ let table=document.createElement('table');table.className='control-table';let head=table.insertRow();
+ ['NCT ID','适应症','药物/干预','公开结果核查','预测状态','预计完成日期','倒计时','最新模型','最新预测版本','冻结时间','主要终点聚合','操作'].forEach(x=>head.append(node('th',x)));
+ for(let trial of data.trials||[]){
+  let row=table.insertRow();row.dataset.expectedDate=trial.expected_result_date||'';
+  let ind=(trial.indication||[]).join('、')||trial.indication_source||'源 manifest 未提供';
+  let ints=(trial.interventions||[]).map(x=>x&&x.name?x.name:String(x)).join('、')||trial.intervention_source||'源 manifest 未提供';
+  let dateCell=trial.expected_result_date?trial.expected_result_date+'（依据：'+(trial.expected_result_basis||'primary_completion_date')+'）':'未记录';
+  let countdown=trial.days_to_expected_result===null?'未记录':trial.days_to_expected_result<0?`预计日期已过 ${Math.abs(trial.days_to_expected_result)} 天，尚未完成公开结果核查`:`距预计完成 ${trial.days_to_expected_result} 天`;
+  [trial.nct_id,ind,ints,trial.public_result_audit_status,trial.prediction_status||trial.status||'待预测',dateCell,countdown,trial.latest_model||'—',trial.latest_prediction_version||'未生成',trial.frozen_at||'—',trial.primary_rollup||'未预测'].forEach(x=>row.append(node('td',controlText(x))));
+  let action=node('td');let b2=node('button','查看冻结历史','light');b2.onclick=()=>loadProspectiveTrial(trial.nct_id);action.append(b2);row.append(action)}
+ section.append(table);root.append(section);
+ refreshProspectiveCountdown();if(window.__prospectiveTimer)clearInterval(window.__prospectiveTimer);window.__prospectiveTimer=setInterval(refreshProspectiveCountdown,60000)}
+async function loadProspectiveTrial(nctId){try{let data=await controlApi('/api/control/prospective/trials/'+encodeURIComponent(nctId));let root=$('control-content');let back=node('button','返回前瞻性列表','light');back.onclick=()=>openControlPanel('prospective');root.replaceChildren(controlHeader(`${nctId} · 冻结预测历史（完整材料）`,'只读展示已冻结并可读取的历史记录与全部复现材料：原始 Prompt、完整模型输出、搜索上下文、工具事件、解析状态。不补写缺失周期、不生成准确率。'),back);
+ let t=data.trial||{};
+ let states=node('section',undefined,'control-section');states.append(node('h3','四状态'));
+ let st=document.createElement('table');st.className='control-table';let sh=st.insertRow();
+ ['公开结果核查','预测状态','官方结果状态','评估状态'].forEach(x=>sh.append(node('th',x)));
+ let sr=st.insertRow();[t.public_result_audit_status||'待核查',t.prediction_status||t.status||'待预测',t.observation_status||'未发现',t.evaluation_status||'不适用'].forEach(x=>sr.append(node('td',controlText(x))));
+ states.append(st);
+ states.append(node('p','预计完成日期：'+controlText(t.expected_result_date)+'（依据：'+controlText(t.expected_result_basis)+'；'+controlText(t.expected_result_semantics)+'）','control-muted'));
+ root.append(states);
+ let box=node('section',undefined,'control-section');box.append(node('h3','预测历史（'+((data.prediction_history||[]).length)+' 条冻结记录）'));
+ if(!(data.prediction_history||[]).length){box.append(node('p',data.history_note||'暂无冻结预测历史。','control-muted'))}
 for(let item of data.prediction_history||[]){
 let d=node('div',undefined,'control-step');d.style.flexDirection='column';d.style.gap='4px';
 let head=node('div');head.style.display='flex';head.style.gap='10px';head.style.alignItems='baseline';head.style.flexWrap='wrap';
-let badge=item.extraction_status==='extraction_incomplete'?'⚠ 提取不完整':'✓ 提取成功';
-let badgeColor=item.extraction_status==='extraction_incomplete'?'var(--yellow)':'var(--green)';
-head.append(node('strong',controlText(item.predicted_at)),node('span',badge,'control-pill'));
+let isRecovered=item.provenance&&item.provenance!=='frozen';
+let badge=isRecovered?'⚠ 恢复投影（非正式冻结结构化结果）':'✓ 冻结结构化结果';
+let badgeColor=isRecovered?'var(--yellow)':'var(--green)';
+head.append(node('strong',controlText(item.frozen_at)),node('span',badge,'control-pill'));
 let pill=head.lastChild;pill.style.color=badgeColor;
-head.append(node('span',`模型：${controlText(item.model_name)} · Prompt：${controlText(item.prediction_prompt_version)} · Harness：${controlText(item.harness_version)}`,'control-muted'));
+head.append(node('span',`模型：${controlText(item.model_name)} · 运行：${controlText(item.run_id)} · 解析：${controlText(item.parse_status)}`,'control-muted'));
 d.append(head);
-let stats=node('div',undefined,'control-muted');
-stats.textContent=`运行：${controlText(item.run_id)} · 工具调用 ${controlText(item.tool_call_count)} 次（开放网页 ${controlText(item.open_web_call_count)} 次）· 终点预测 ${controlText(item.endpoint_count)} 条${item.endpoint_call_counts?'（判断分布：'+Object.entries(item.endpoint_call_counts).map(([k,v])=>k+' '+v).join(' / ')+'）':''}${item.primary_rollup&&item.primary_rollup.primary_rollup?' · 主要终点聚合：'+item.primary_rollup.primary_rollup+(item.primary_rollup.primary_probability_mean!=null?'（P̄ '+item.primary_rollup.primary_probability_mean+'）':''):''}${item.primary_rollup&&item.primary_rollup.primary_binarized?' · 二值化判定：'+item.primary_rollup.primary_binarized:''}${item.primary_rollup&&item.primary_rollup.primary_direction_favorable?' · 方向利好终点：'+item.primary_rollup.primary_direction_favorable:''}`;
-d.append(stats);
+if(item.provenance_note)d.append(node('p',item.provenance_note,isRecovered?'control-error':'control-muted'));
+let stats2=node('div',undefined,'control-muted');
+stats2.textContent=`工具调用 ${controlText(item.tool_call_count)} 次（开放网页 ${controlText(item.open_web_call_count)} 次）· 终点预测 ${controlText(item.endpoint_count)} 条${item.endpoint_call_counts?'（判断分布：'+Object.entries(item.endpoint_call_counts).map(([k,v])=>k+' '+v).join(' / ')+'）':''}${item.primary_rollup&&item.primary_rollup.primary_rollup?' · 主要终点聚合：'+item.primary_rollup.primary_rollup:''}`;
+d.append(stats2);
 if(item.extraction_note)d.append(node('p',item.extraction_note,'control-error'));
 let oc=item.outcome||{};
 if(oc.classification){
@@ -166,6 +226,21 @@ if((item.analysis_trace||[]).length){
 let tr=node('details');tr.append(node('summary','分析轨迹'));
 for(let s of item.analysis_trace)tr.append(node('div',String(s),'quote'));
 d.append(tr)}
+// ---- 完整冻结材料（可复现性） ----
+let mat=node('details');mat.append(node('summary','完整冻结材料（原始 Prompt / 模型原始输出 / 搜索上下文 / 工具事件 / 解析状态）'));
+if(item.original_system_prompt){let p1=node('details');p1.append(node('summary','原始 System Prompt（'+item.original_system_prompt.length+' 字符）'));p1.append(node('pre',item.original_system_prompt));mat.append(p1)}
+if(item.original_user_query){let p2=node('details');p2.append(node('summary','动态 User Prompt（原始 '+item.original_user_query.length+' 字符）'));p2.append(node('pre',item.original_user_query));mat.append(p2)}
+if(item.raw_model_output){let p3=node('details');p3.append(node('summary','完整模型原始输出（'+item.raw_model_output.length+' 字符）'));p3.append(node('pre',item.raw_model_output));mat.append(p3)}else mat.append(node('p','完整模型原始输出：缺失（该行为缺陷行，冻结记录原样保留）','control-muted'));
+if(item.search_context){let p4=node('details');p4.append(node('summary','完整 search_context'));p4.append(node('pre',JSON.stringify(item.search_context,null,1)));mat.append(p4)}
+if((item.tool_events||[]).length){let p5=node('details');p5.append(node('summary','完整 tool_events（'+item.tool_events.length+' 条）'));
+let te=document.createElement('table');te.className='control-table';let th2=te.insertRow();
+['#','kind','name','参数','结果摘录'].forEach(x=>th2.append(node('th',x)));
+item.tool_events.forEach((e,i)=>{let r2=te.insertRow();r2.append(node('td',String(i+1)),node('td',controlText(e.kind)),node('td',controlText(e.name)),node('td',String(e.arguments||'').slice(0,200)),node('td',String(e.result_excerpt||'').slice(0,160)))});
+p5.append(te);mat.append(p5)}
+mat.append(node('p','解析状态：'+controlText(item.parse_status)+(item.parse_error?' · 错误：'+controlText(String(item.parse_error).slice(0,200)):'')+' · packet_sha256：'+controlText(item.packet_sha256),'control-muted'));
+if(item.frozen_structured_prediction){let p6=node('details');p6.append(node('summary','冻结 structured_prediction（原始 JSON）'));p6.append(node('pre',JSON.stringify(item.frozen_structured_prediction,null,1)));mat.append(p6)}
+if(item.recovered_projection){let p7=node('details');p7.append(node('summary','恢复投影（只读，非正式冻结结果）'));p7.append(node('pre',JSON.stringify(item.recovered_projection,null,1)));mat.append(p7)}
+d.append(mat);
 box.append(d)}
 root.append(box)}catch(error){msg(error.message)}}
 function renderF1Control(data){
